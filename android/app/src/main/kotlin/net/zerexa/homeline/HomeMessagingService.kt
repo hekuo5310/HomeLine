@@ -7,7 +7,10 @@ import com.google.firebase.messaging.RemoteMessage
 class HomeMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val store = WakeStore(this)
-        if (!store.add(message.data)) return
+        val added = store.add(message.data)
+        if (!added && store.all().none { it["call_id"] == message.data["call_id"] }) return
+        // A duplicate may retry a previously OS-rejected start. The durable hint
+        // and Dart recovery remain deduplicated; its original expiry is unchanged.
         if (message.priority != RemoteMessage.PRIORITY_HIGH) {
             // Keep the hint for a later visible launch; background FGS is forbidden.
             return

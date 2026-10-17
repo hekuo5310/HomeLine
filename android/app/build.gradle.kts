@@ -66,3 +66,9 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
 }
+
+// AGP 9 host tests package Flutter's generated assets. Declare the producer
+// explicitly so testDebugUnitTest also works before assembleDebug.
+tasks.matching { it.name == "packageDebugUnitTestForUnitTest" }.configureEach {
+    dependsOn("copyFlutterAssetsDebug")
+}

@@ -68,9 +68,16 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
       call.hangup();
     }
     _calls.clear();
-    if (_helper.registered) await _helper.unregister(false);
-    _helper.stop();
-    _registrations.add(SipRegistrationState.stopped);
+    try {
+      if (_helper.registered) {
+        await _helper.unregister(false).timeout(const Duration(seconds: 3));
+      }
+    } catch (_) {
+      // Local revocation cannot depend on an unreachable registrar's response.
+    } finally {
+      _helper.stop();
+      _registrations.add(SipRegistrationState.stopped);
+    }
   }
 
   sdk.Call _call(String id) =>

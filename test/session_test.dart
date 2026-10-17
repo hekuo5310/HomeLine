@@ -82,8 +82,10 @@ class FakeApi extends HomeLineApi {
   bool revoked = false, offline = false;
   SessionDto? restored;
   bool telemetryFails = false;
+  Completer<CallDto>? resolveGate;
   @override
-  Future<CallDto> callForSip(String sipId) async => serverCall();
+  Future<CallDto> callForSip(String sipId) async =>
+      resolveGate == null ? serverCall() : await resolveGate!.future;
   @override
   Future<void> deviceEvent(String id, String stage, String key) async {
     if (telemetryFails) throw const ApiFailure('receipt unavailable');
@@ -279,4 +281,21 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(platform.ended, 1);
   });
+  test(
+    'SIP cancellation clears Telecom while HTTP authorization is stalled',
+    () async {
+      await controller.login('user', 'password', 'phone');
+      api.resolveGate = Completer<CallDto>();
+      sip.emittedCalls.add(event(CallPhase.ringing));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      sip.emittedCalls.add(event(CallPhase.ended));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(controller.calls.current!.terminal, isTrue);
+      expect(platform.ended, 1);
+      api.resolveGate!.complete(serverCall());
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(platform.shown, 0);
+      expect(controller.calls.current!.terminal, isTrue);
+    },
+  );
 }

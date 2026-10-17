@@ -69,6 +69,11 @@ class AppController extends ChangeNotifier
     );
     _subscriptions.add(
       sip.callEvents.listen((event) {
+        // CANCEL/BYE must clear native ringing even while an HTTP resolve waits.
+        if (event.terminal) {
+          unawaited(_handleSip(event));
+          return;
+        }
         final epoch = _epoch;
         _sipWork = _sipWork.then((_) async {
           if (!_closed && epoch == _epoch) await _handleSip(event);
@@ -413,7 +418,7 @@ class AppController extends ChangeNotifier
         );
       }
       if (event.phase == CallPhase.failed) error = event.reason;
-      if (event.phase == CallPhase.active) {
+      if (event.phase == CallPhase.active && calls.current?.terminal == false) {
         try {
           final call = authority ?? await api.callForSip(event.id);
           await host.journal(call.id, true);
@@ -596,6 +601,12 @@ class AppController extends ChangeNotifier
     _sessionExpiry?.cancel();
     _pushRetry?.cancel();
     events.stop();
+    // Invalidate immediately, before any platform/network cleanup can suspend.
+    api.token = null;
+    session = null;
+    snapshot = null;
+    pendingOutbound = null;
+    _sipEnabled = false;
     try {
       await host.clear();
     } catch (_) {}
@@ -608,10 +619,6 @@ class AppController extends ChangeNotifier
       // Session revocation must still clear secrets when platform cleanup fails.
     }
     calls.reset();
-    api.token = null;
-    session = null;
-    snapshot = null;
-    pendingOutbound = null;
     await vault.clear();
     await store.clear();
     _notify();
