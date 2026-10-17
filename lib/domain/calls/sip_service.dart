@@ -1,6 +1,6 @@
 import 'dart:async';
 
-enum SipRegistrationState { stopped, connecting, registered, failed }
+enum SipRegistrationState { stopped, connecting, registered, failed, expired }
 
 enum CallPhase { ringing, dialing, connecting, active, ended, failed }
 

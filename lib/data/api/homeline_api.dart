@@ -92,6 +92,16 @@ class HomeLineApi {
     '/v1/devices/current/push-token',
     data: {'provider': 'fcm', 'token': token},
   );
+  Future<CallDto> callById(String id) async => CallDto.fromJson(
+    await request('GET', '/v1/calls/${Uri.encodeComponent(id)}'),
+  );
+  Future<void> deviceEvent(String id, String stage, String key) async =>
+      request(
+        'POST',
+        '/v1/calls/${Uri.encodeComponent(id)}/device-events',
+        data: {'stage': stage},
+        idempotencyKey: key,
+      );
   Future<CallDto> callForSip(String sipId) async => CallDto.fromJson(
     await request('POST', '/v1/calls/resolve', data: {'sip_call_id': sipId}),
   );

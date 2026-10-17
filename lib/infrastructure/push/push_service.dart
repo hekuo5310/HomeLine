@@ -1,12 +1,18 @@
 import 'dart:async';
 
+import '../../domain/calls/wake_hint.dart';
+export '../../domain/calls/wake_hint.dart';
+
 import 'package:firebase_core/firebase_core.dart';
+
+import '../../platform/call_integration/call_host.dart';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import '../../data/local_database/local_store.dart';
 
-/// A background isolate cannot own the foreground SIP helper/Telecom channel.
-/// Persist only a hint; headless native call recovery is NOT implemented yet.
+/// Reserved FlutterFire path for future platform adapters. Android uses the
+/// native HomeMessagingService and a single application-owned FlutterEngine.
 @pragma('vm:entry-point')
 Future<void> backgroundMessage(RemoteMessage message) async {
   await Firebase.initializeApp();
@@ -20,33 +26,18 @@ Future<void> backgroundMessage(RemoteMessage message) async {
   }
 }
 
-class WakeHint {
-  const WakeHint(this.callId, this.expiresAt);
-  final String callId;
-  final DateTime expiresAt;
-  static WakeHint? parse(Map<String, dynamic> data, DateTime now) {
-    if (data['type'] != 'incoming_call') return null;
-    final id = data['call_id'];
-    final expiry = DateTime.tryParse(data['expires_at']?.toString() ?? '');
-    if (id is! String ||
-        id.isEmpty ||
-        id.length > 200 ||
-        expiry == null ||
-        !expiry.isAfter(now) ||
-        expiry.difference(now) > const Duration(minutes: 2)) {
-      return null;
-    }
-    return WakeHint(id, expiry);
-  }
-}
-
 class PushService {
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Future<String> start({
     required Future<void> Function(String?) onToken,
     required Future<void> Function(WakeHint) onHint,
   }) async {
-    if (!const bool.fromEnvironment('ENABLE_FCM')) return '未配置（休眠来电尚未完成）';
+    if (!const bool.fromEnvironment('ENABLE_FCM')) return '未启用 FCM';
+    if (CallHost().supported) {
+      final token = await CallHost().pushToken();
+      await onToken(token);
+      return token == null ? '推送令牌不可用' : 'FCM 已绑定';
+    }
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(backgroundMessage);
     final messaging = FirebaseMessaging.instance;
@@ -77,7 +68,7 @@ class PushService {
     _subscriptions.add(FirebaseMessaging.onMessageOpenedApp.listen(receive));
     final initial = await messaging.getInitialMessage();
     if (initial != null) receive(initial);
-    return '令牌已绑定；后台无界面唤醒未完成';
+    return 'FCM 已绑定';
   }
 
   Future<void> stop() async {

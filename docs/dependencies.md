@@ -29,3 +29,17 @@
 权限插件没有盲用最新版：13.0.2 解析到 Android 实现 14.1.0，要求 SDK 37；本工程选择已核实的 12.0.3 / Android 13.0.1 来保持 SDK 36 构建兼容。
 
 Firebase Messaging 17 新增的 onRegistered 发出 Firebase Installation ID，契约 v1 则需要 FCM registration token。适配器明确保留该版本仍支持的 getToken/onTokenRefresh 兼容 API，不把 FID 冒充 token；未来必须与服务器寻址协议一起迁移。
+
+## Android 原生新增依赖
+
+- Google Services Gradle 插件 4.4.4（Google 官方；Apache-2.0）：仅本地存在 google-services.json 时应用。
+- Firebase Android BoM 35.0.0 + firebase-messaging（Google 官方；Apache-2.0）：与 firebase_core 5.0.0 解析的 BoM 一致；具体原生版本由 BoM 固定。Android 使用原生 token 和 onNewToken，避免混用 Firebase Installation ID。FlutterFire 的三个后台组件从 Android manifest 合并结果移除，以免产生第二个 SIP 引擎/重复接收；保留 Google Firebase 接收器。
+- JUnit 4.13.2（EPL-1.0）与 Robolectric 4.17（MIT）：仅 JVM 测试；不进入发布 APK。Robolectric 测试配置 Android API 35 与 JDK 17。
+
+维护/许可核查入口：Firebase 官方 Android release notes、Google Services 插件文档、firebase-android-sdk LICENSE 与 Robolectric 4.17 GitHub release/LICENSE。原生编译和 WakeStore JVM 测试单独记录在 verification.md。Flutter 其余平台的 FlutterFire 路径仅为扩展边界，不代表已交付对应系统来电能力。
+
+- https://firebase.google.com/support/release-notes/android
+- https://developers.google.com/android/guides/google-services-plugin
+- https://github.com/firebase/firebase-android-sdk/blob/main/LICENSE
+- https://github.com/robolectric/robolectric/releases/tag/robolectric-4.17
+- https://github.com/robolectric/robolectric/blob/master/LICENSE

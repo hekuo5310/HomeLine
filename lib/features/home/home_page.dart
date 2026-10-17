@@ -186,6 +186,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                     SipRegistrationState.connecting => '连接中',
                     SipRegistrationState.registered => '已注册',
                     SipRegistrationState.failed => '注册失败',
+                    SipRegistrationState.expired => '凭据待更新，现有通话继续',
                   }),
                   _row('外线', snapshot?.lineStatus ?? '尚未同步'),
                   _row(
@@ -326,15 +327,34 @@ class _HomePageState extends ConsumerState<HomePage> {
                   _row('分机', session.extension),
                   _row('推送', state.pushStatus),
                   _row('API', state.api.dio.options.baseUrl),
-                  const Text(
-                    '休眠来电尚未完成；请保持应用前台进行 SIP 技术验证。\n未验证 iOS / Windows / macOS。',
-                  ),
+                  const Text('来电由电话服务器和 Android 通话服务协作处理。推送不可用时由服务器执行超时或备用路由。'),
                   const SizedBox(height: 16),
                   OutlinedButton(
                     onPressed: state.loading
                         ? null
                         : () => state.run(state.configureTelecom),
                     child: const Text('启用 Android 系统通话账号'),
+                  ),
+                  SwitchListTile(
+                    title: const Text('锁屏时隐藏来电号码'),
+                    value: state.hideCaller,
+                    onChanged: state.loading
+                        ? null
+                        : (value) =>
+                              state.run(() => state.setHideCaller(value)),
+                  ),
+                  OutlinedButton(
+                    onPressed: state.loading
+                        ? null
+                        : () => state.run(state.diagnose),
+                    child: const Text('运行网络与权限诊断'),
+                  ),
+                  if (state.diagnostics != null)
+                    SelectableText(state.diagnostics!),
+                  AboutListTile(
+                    applicationName: 'HomeLine',
+                    applicationVersion: '0.1.0',
+                    child: const Text('关于与开源许可证'),
                   ),
                   const SizedBox(height: 16),
                   FilledButton(

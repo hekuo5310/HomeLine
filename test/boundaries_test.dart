@@ -91,6 +91,22 @@ void main() {
       api.close();
     },
   );
+  test('Stage receipt retry has a stable body and key', () async {
+    final adapter = CaptureAdapter();
+    final api = HomeLineApi(
+      'https://example.com',
+      client: Dio()..httpClientAdapter = adapter,
+    );
+    await api.deviceEvent('call', 'registered', 'stable-stage-key');
+    await api.deviceEvent('call', 'registered', 'stable-stage-key');
+    expect(adapter.requests.first.data, adapter.requests.last.data);
+    expect(adapter.requests.first.data, {'stage': 'registered'});
+    expect(
+      adapter.requests.first.headers['Idempotency-Key'],
+      adapter.requests.last.headers['Idempotency-Key'],
+    );
+    api.close();
+  });
   test('Untrusted push hints expire and cannot represent SIP state', () {
     final now = DateTime.utc(2026, 10, 17);
     Map<String, dynamic> hint(DateTime expiration) => {

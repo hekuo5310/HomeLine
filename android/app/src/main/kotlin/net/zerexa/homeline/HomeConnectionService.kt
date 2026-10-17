@@ -5,6 +5,20 @@ import android.os.Build
 import android.telecom.*
 
 class HomeConnectionService : ConnectionService() {
+    companion object { var releaseFocus: (() -> Unit)? = null }
+    override fun onCreate() {
+        super.onCreate()
+        releaseFocus = { connectionServiceFocusReleased() }
+    }
+    override fun onDestroy() { releaseFocus = null; super.onDestroy() }
+    override fun onConnectionServiceFocusLost() {
+        // Yield the single call rather than pretending to support hold/resume.
+        for (id in TelecomBridge.connections.keys.toList()) {
+            TelecomBridge.emit?.invoke(mapOf("id" to id, "action" to "focusLost"))
+        }
+        if (!TelecomBridge.hasCalls()) connectionServiceFocusReleased()
+    }
+
     override fun onCreateIncomingConnection(account: PhoneAccountHandle?, request: ConnectionRequest): Connection =
         TelecomBridge.create(this, request, true)
     override fun onCreateOutgoingConnection(account: PhoneAccountHandle?, request: ConnectionRequest): Connection =
@@ -46,5 +60,6 @@ class HomeConnection(private val context: Context, val callId: String) : Connect
         context.getSystemService(android.app.NotificationManager::class.java).cancel(callId, 1)
         setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
         destroy()
+        CallHostService.stopIfIdle(context)
     }
 }

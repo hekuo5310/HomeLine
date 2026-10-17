@@ -23,6 +23,7 @@ class CallController {
   String? outcome;
   int _generation = 0;
   final _busy = <String>{};
+  final _ending = <String>{};
   final _ended = <String>{};
   final _shown = <String>{};
   final _revisions = <String, int>{};
@@ -118,14 +119,14 @@ class CallController {
   }
 
   Future<void> endByUser(String sipId, bool reject, String key) async {
-    if (!_busy.add(sipId) || _ended.contains(sipId)) return;
+    if (_ended.contains(sipId) || !_ending.add(sipId)) return;
     try {
       // Stop local audio even when the REST acknowledgement is unavailable.
       await terminate(sipId, reject: reject);
       final call = await authority.resolve(sipId);
       await authority.action(call.id, reject ? 'reject' : 'hangup', key);
     } finally {
-      _busy.remove(sipId);
+      _ending.remove(sipId);
     }
   }
 

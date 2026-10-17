@@ -6,6 +6,8 @@ import '../features/auth/login_page.dart';
 import '../features/home/home_page.dart';
 import 'providers.dart';
 import 'theme.dart';
+import '../main.dart' show launch;
+import '../core/networking/server_settings.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final controller = ref.read(appControllerProvider);
@@ -80,19 +82,69 @@ class _HomeLineAppState extends ConsumerState<HomeLineApp>
   );
 }
 
-class SetupRequiredApp extends StatelessWidget {
+class SetupRequiredApp extends StatefulWidget {
   const SetupRequiredApp({super.key});
+  @override
+  State<SetupRequiredApp> createState() => _SetupRequiredAppState();
+}
+
+class _SetupRequiredAppState extends State<SetupRequiredApp> {
+  final server = TextEditingController();
+  String? error;
+  bool saving = false;
+  @override
+  void dispose() {
+    server.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => MaterialApp(
     theme: homeLineTheme(),
     home: Scaffold(
       appBar: AppBar(title: const Text('HomeLine')),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            '尚未配置电话服务器。\n请按照 README 配置 HTTPS API 地址。\n\n当前版本不会模拟注册、来电或接通。',
-            textAlign: TextAlign.center,
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.all(24),
+            children: [
+              const Text('尚未配置电话服务器。请输入自建服务器的 HTTPS 地址。'),
+              const SizedBox(height: 20),
+              TextField(
+                controller: server,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(labelText: 'HTTPS 服务器地址'),
+              ),
+              if (error != null) Text(error!),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        setState(() {
+                          saving = true;
+                          error = null;
+                        });
+                        try {
+                          final value = server.text.trim();
+                          await ServerSettings.save(value);
+                          launch(value);
+                        } catch (_) {
+                          if (mounted) {
+                            setState(() {
+                              error = '地址无效或安全存储不可用，请检查 HTTPS 地址';
+                              saving = false;
+                            });
+                          }
+                        }
+                      },
+                child: const Text('连接服务器'),
+              ),
+              const SizedBox(height: 12),
+              const Text('服务器负责账号、分机和线路授权。应用不会模拟注册或通话。'),
+            ],
           ),
         ),
       ),

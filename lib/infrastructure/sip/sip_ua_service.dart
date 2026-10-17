@@ -16,6 +16,7 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
   final _events = StreamController<SipCallEvent>.broadcast();
   final Map<String, sdk.Call> _calls = {};
   bool _enabled = false;
+  bool _credentialsValid = false;
   Timer? _expiry;
   @override
   Stream<SipRegistrationState> get registrationStates => _registrations.stream;
@@ -31,6 +32,7 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
     _helper = sdk.SIPUAHelper(customLogger: Logger(level: Level.off));
     _helper.addSipUaHelperListener(this);
     _enabled = true;
+    _credentialsValid = true;
     _registrations.add(SipRegistrationState.connecting);
     final settings = sdk.UaSettings()
       ..transportType = sdk.TransportType.WS
@@ -45,7 +47,14 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
       ..connectionRecoveryMaxInterval = 30;
     settings.webSocketSettings.allowBadCertificate = false;
     _expiry = Timer(configuration.expiresAt.difference(DateTime.now()), () {
-      unawaited(unregister());
+      _credentialsValid = false;
+      if (_calls.isEmpty) {
+        unawaited(unregister());
+      } else {
+        // Existing authenticated dialog keeps its media; no new REGISTER/INVITE.
+        if (_helper.registered) unawaited(_helper.unregister(false));
+        _registrations.add(SipRegistrationState.expired);
+      }
     });
     await _helper.start(settings);
   }
@@ -53,6 +62,7 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
   @override
   Future<void> unregister() async {
     _enabled = false;
+    _credentialsValid = false;
     _expiry?.cancel();
     for (final call in _calls.values.toList()) {
       call.hangup();
@@ -67,7 +77,9 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
       _calls[id] ?? (throw StateError('SIP 呼叫已结束或尚未恢复'));
   @override
   Future<void> dial(String destination) async {
-    if (!_enabled || !_helper.registered) throw StateError('SIP 尚未注册');
+    if (!_enabled || !_credentialsValid || !_helper.registered) {
+      throw StateError('SIP 尚未注册');
+    }
     if (!RegExp(r'^[0-9]{2,8}$').hasMatch(destination)) {
       throw const FormatException('仅允许个人分机直拨；外线请提交排队任务');
     }
@@ -106,6 +118,10 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
     if (id == null) return;
     if (!_enabled) {
       call.hangup();
+      return;
+    }
+    if (!_credentialsValid && !_calls.containsKey(id)) {
+      call.hangup({'status_code': 480});
       return;
     }
     final incoming = call.direction == sdk.Direction.incoming;
@@ -159,7 +175,7 @@ class SipUaService implements SipService, sdk.SipUaHelperListener {
 
   @override
   void registrationStateChanged(sdk.RegistrationState state) {
-    if (!_enabled) return;
+    if (!_enabled || !_credentialsValid) return;
     _registrations.add(switch (state.state) {
       sdk.RegistrationStateEnum.REGISTERED => SipRegistrationState.registered,
       sdk.RegistrationStateEnum.REGISTRATION_FAILED =>

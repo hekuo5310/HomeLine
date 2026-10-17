@@ -15,7 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.telecom.*
 
-/** Process-local only. Headless Flutter engine restoration is intentionally not claimed. */
+/** Telecom state belongs to the process; persisted business IDs reconcile process loss. */
 object TelecomBridge {
     val connections = mutableMapOf<String, HomeConnection>()
     private val pending = mutableSetOf<String>()
@@ -23,6 +23,7 @@ object TelecomBridge {
     private val active = mutableSetOf<String>()
     var emit: ((Map<String, Any>) -> Unit)? = null
     const val CHANNEL = "homeline_calls"
+    fun hasCalls(): Boolean = pending.isNotEmpty() || connections.isNotEmpty()
     fun handle(context: Context) = PhoneAccountHandle(ComponentName(context, HomeConnectionService::class.java), "homeline")
     fun register(context: Context) {
         val telecom = context.getSystemService(TelecomManager::class.java)
@@ -40,9 +41,17 @@ object TelecomBridge {
         if (id in ended || id in pending || connections.containsKey(id)) return
         check(emit != null) { "Foreground SIP engine unavailable" }
         register(context)
+        CallHostService.start(context)
         val telecom = context.getSystemService(TelecomManager::class.java)
         val extras = Bundle().apply { putString("id", id); putString("remote", remote) }
         pending.add(id)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (pending.remove(id)) {
+                ended.add(id); active.remove(id)
+                emit?.invoke(mapOf("action" to "disconnect", "id" to id))
+                CallHostService.stopIfIdle(context)
+            }
+        }, 15_000)
         try {
             if (incoming) {
                 extras.putParcelable(TelecomManager.EXTRA_INCOMING_CALL_ADDRESS, Uri.fromParts("sip", remote, null))
@@ -89,14 +98,19 @@ object TelecomBridge {
             putExtra("id", id); putExtra("action", action)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    fun displayName(context: Context, remote: String): String {
+        val hide = context.getSharedPreferences("privacy", Context.MODE_PRIVATE).getBoolean("hide_caller", true)
+        return if (hide && context.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked) "HomeLine" else remote
+    }
     fun notify(context: Context, id: String, remote: String, ongoing: Boolean) {
+        val shownName = displayName(context, remote)
         val builder = Notification.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.sym_call_incoming).setContentTitle(if (ongoing) "HomeLine 通话中" else "HomeLine 来电")
-            .setContentText(remote).setCategory(Notification.CATEGORY_CALL).setOngoing(true)
+            .setContentText(shownName).setCategory(Notification.CATEGORY_CALL).setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE).setOnlyAlertOnce(ongoing)
             .setContentIntent(intent(context, id, "open"))
         if (Build.VERSION.SDK_INT >= 31) {
-            val person = Person.Builder().setName(remote.ifEmpty { "未知号码" }).setImportant(true).build()
+            val person = Person.Builder().setName(shownName.ifEmpty { "未知号码" }).setImportant(true).build()
             builder.setStyle(if (ongoing) Notification.CallStyle.forOngoingCall(person, intent(context, id, "disconnect"))
                 else Notification.CallStyle.forIncomingCall(person, intent(context, id, "reject"), intent(context, id, "answer")))
         } else {

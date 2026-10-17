@@ -14,8 +14,11 @@ import '../infrastructure/push/push_service.dart';
 import '../infrastructure/server_events.dart';
 import '../platform/call_integration/call_integration.dart';
 import 'call_controller.dart';
+import 'wake_recovery.dart';
+import '../platform/call_integration/call_host.dart';
 
-class AppController extends ChangeNotifier implements CallAuthority {
+class AppController extends ChangeNotifier
+    implements CallAuthority, WakeRecoveryPort {
   AppController({
     required this.api,
     required this.sip,
@@ -23,11 +26,34 @@ class AppController extends ChangeNotifier implements CallAuthority {
     required this.vault,
     required this.store,
     ServerEvents? serverEvents,
-  }) : events = serverEvents ?? ServerEvents() {
+    CallHost? callHost,
+  }) : events = serverEvents ?? ServerEvents(),
+       host = callHost ?? CallHost() {
     calls = CallController(sip, platform, this);
+    recovery = WakeRecovery(this);
+    _subscriptions.add(
+      host.events.listen((event) {
+        unawaited(
+          run(() async {
+            switch (event['event']) {
+              case 'wake':
+                final hint = WakeHint.parse(event, DateTime.now());
+                if (hint != null) await recovery.receive(hint);
+              case 'interrupted':
+                await _reconcileInterrupted(event['call_id'] as String);
+              case 'tokenChanged':
+                if (session != null) await _syncNativePush();
+              case 'invalidate':
+                await refresh();
+            }
+          }, independent: true),
+        );
+      }),
+    );
     _subscriptions.add(
       sip.registrationStates.listen((state) {
         registration = state;
+        if (state == SipRegistrationState.expired) _sipEnabled = false;
         if (state == SipRegistrationState.failed) {
           error = 'SIP 注册失败，请检查设备凭据、TLS 证书和电话服务器配置';
         }
@@ -43,7 +69,10 @@ class AppController extends ChangeNotifier implements CallAuthority {
     );
     _subscriptions.add(
       sip.callEvents.listen((event) {
-        unawaited(_handleSip(event));
+        final epoch = _epoch;
+        _sipWork = _sipWork.then((_) async {
+          if (!_closed && epoch == _epoch) await _handleSip(event);
+        });
       }),
     );
     _subscriptions.add(
@@ -58,6 +87,12 @@ class AppController extends ChangeNotifier implements CallAuthority {
                 await endCall(id, true);
               case 'disconnect':
                 await endCall(id, false);
+              case 'focusLost':
+                try {
+                  await calls.terminate(id);
+                } finally {
+                  await host.releaseFocus();
+                }
               case 'audio':
                 audioRoute = event['route']?.toString() ?? 'unknown';
             }
@@ -66,6 +101,8 @@ class AppController extends ChangeNotifier implements CallAuthority {
       }),
     );
   }
+  final CallHost host;
+  late final WakeRecovery recovery;
   final HomeLineApi api;
   final SipService sip;
   final CallIntegration platform;
@@ -75,13 +112,18 @@ class AppController extends ChangeNotifier implements CallAuthority {
   final ServerEvents events;
   late final CallController calls;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
-  Timer? _poll, _lease, _sessionExpiry;
+  Timer? _poll, _lease, _sessionExpiry, _pushRetry, _restoreRetry;
+  Future<void> _sipWork = Future<void>.value();
   SessionDto? session;
   SnapshotDto? snapshot;
   OutboundRequest? pendingOutbound;
   SipRegistrationState registration = SipRegistrationState.stopped;
   String? error;
   String pushStatus = '未配置';
+  String? diagnostics;
+  bool hideCaller = true;
+  final pushStages = <String, DateTime>{};
+  final _interrupting = <String>{};
   String audioRoute = 'unknown';
   bool loading = false, restoring = true, _refreshing = false, _closed = false;
   bool _sipEnabled = false, _outboundBusy = false;
@@ -123,19 +165,31 @@ class AppController extends ChangeNotifier implements CallAuthority {
   }
 
   Future<void> restore() async {
+    final epoch = _epoch;
     try {
       final saved = await vault.read();
-      if (saved == null) return;
+      if (epoch != _epoch || saved == null) return;
       if (!saved.expiresAt.isAfter(DateTime.now())) {
         await vault.clear();
         return;
       }
       api.token = saved.accessToken;
-      // Never restore registration from an unverified local UUID or cached status.
-      await _accept(await api.session());
-    } catch (_) {
-      await _clearSession();
-      error = '会话恢复失败，请重新登录';
+      final verified = await api.session();
+      if (epoch != _epoch) return;
+      await _accept(verified);
+    } catch (e) {
+      if (epoch != _epoch) return;
+      if (e is ApiFailure && e.invalidSession) {
+        await _clearSession();
+        error = '会话无效，请重新登录';
+      } else {
+        // An offline launch must not erase a valid device session.
+        error = '暂时无法验证会话，网络恢复后重试';
+        _restoreRetry?.cancel();
+        _restoreRetry = Timer(const Duration(seconds: 5), () {
+          if (!_closed && session == null) unawaited(restore());
+        });
+      }
     } finally {
       restoring = false;
       _notify();
@@ -146,7 +200,10 @@ class AppController extends ChangeNotifier implements CallAuthority {
     if (username.trim().isEmpty || password.isEmpty || name.trim().isEmpty) {
       throw const FormatException('请填写用户名、密码和设备名称');
     }
+    _restoreRetry?.cancel();
+    final epoch = ++_epoch;
     final value = await api.login(username.trim(), password, name.trim());
+    if (epoch != _epoch) throw StateError('会话已变化，请重新登录');
     api.token = value.accessToken;
     await _accept(value);
   }
@@ -158,6 +215,7 @@ class AppController extends ChangeNotifier implements CallAuthority {
       throw const ApiFailure('账号不可用或会话已过期', statusCode: 403);
     }
     final epoch = ++_epoch;
+    _restoreRetry?.cancel();
     session = value;
     snapshot = null;
     api.token = value.accessToken;
@@ -186,15 +244,58 @@ class AppController extends ChangeNotifier implements CallAuthority {
         unawaited(refresh());
       }),
     );
+    unawaited(_startPush(epoch));
     try {
-      pushStatus = await push.start(
-        onToken: api.updatePushToken,
-        onHint: (_) async {
-          await refresh(); // A push cannot create/answer/activate a call.
-        },
-      );
+      await host.ready();
     } catch (_) {
-      pushStatus = '推送配置或令牌绑定失败，可重新登录重试';
+      error = '原生通话服务初始化失败，请重新打开应用';
+    }
+    _notify();
+  }
+
+  Future<void> _startPush(int epoch) async {
+    try {
+      final result = await push.start(
+        onToken: (token) async {
+          if (epoch == _epoch && session != null) {
+            await api.updatePushToken(token);
+          }
+        },
+        onHint: recovery.receive,
+      );
+      if (epoch == _epoch) pushStatus = result;
+    } catch (_) {
+      if (epoch == _epoch) {
+        pushStatus = '推送令牌绑定失败，正在重试';
+        if (host.supported) {
+          _pushRetry = Timer(const Duration(seconds: 5), () {
+            unawaited(_syncNativePush());
+          });
+        }
+      }
+    }
+    _notify();
+  }
+
+  Future<void> _syncNativePush() async {
+    if (!const bool.fromEnvironment('ENABLE_FCM') || session == null) return;
+    final epoch = _epoch;
+    try {
+      final token = await host.pushToken();
+      if (epoch != _epoch || session == null) return;
+      await api.updatePushToken(token);
+      pushStatus = token == null ? '推送令牌不可用' : 'FCM 已绑定';
+    } catch (e) {
+      if (epoch != _epoch) return;
+      if (e is ApiFailure && e.invalidSession) {
+        await _clearSession();
+      } else {
+        pushStatus = '推送同步失败，稍后重试';
+        _pushRetry?.cancel();
+        _pushRetry = Timer(const Duration(seconds: 15), () {
+          unawaited(_syncNativePush());
+        });
+      }
     }
     _notify();
   }
@@ -282,14 +383,90 @@ class AppController extends ChangeNotifier implements CallAuthority {
   }
 
   Future<void> _handleSip(SipCallEvent event) async {
+    final epoch = _epoch;
+    if (session == null) return;
     try {
+      // Reconcile a real INVITE with server ownership before showing Telecom.
+      // Unknown or stale device legs are rejected instead of ringing optimistically.
+      CallDto? authority;
+      if (event.incoming && !event.terminal) {
+        authority = await api.callForSip(event.id);
+        if (epoch != _epoch) return;
+        await calls.applyServerCall(authority);
+      }
+      if (epoch != _epoch) return;
       await calls.onSipEvent(event);
+      if (authority != null &&
+          calls.current?.id == event.id &&
+          calls.current?.terminal == false) {
+        recovery.observed(authority.id);
+        unawaited(
+          report(
+            authority.id,
+            event.phase == CallPhase.active ? 'connected' : 'ringing',
+          ).catchError((Object _) {
+            if (epoch == _epoch) {
+              error = '通话状态回执未确认，正在同步';
+              _notify();
+            }
+          }),
+        );
+      }
       if (event.phase == CallPhase.failed) error = event.reason;
-      if (event.terminal) await refresh();
+      if (event.phase == CallPhase.active) {
+        try {
+          final call = authority ?? await api.callForSip(event.id);
+          await host.journal(call.id, true);
+        } catch (_) {
+          error = '通话恢复记录暂时不可用';
+        }
+      }
+      if (event.terminal) {
+        try {
+          final call = await api.callForSip(event.id);
+          await host.journal(call.id, false);
+        } catch (_) {}
+        await refresh();
+      }
     } catch (_) {
-      error = 'Android 电话集成失败，请启用 HomeLine 通话账号';
+      if (event.incoming && !event.terminal) {
+        try {
+          await calls.terminate(event.id);
+        } catch (_) {}
+      }
+      error = '呼叫验证或系统通话集成失败，请检查服务器和通话权限';
     }
     _notify();
+  }
+
+  Future<void> _reconcileInterrupted(String id) async {
+    if (session == null || !_interrupting.add(id)) return;
+    try {
+      try {
+        final call = await api.callById(id);
+        if (!call.terminal && call.answeredDeviceId == deviceId) {
+          await report(id, 'media_lost');
+        }
+      } on ApiFailure catch (e) {
+        if (e.statusCode != 404) rethrow;
+      }
+      await host.journal(id, false);
+    } finally {
+      _interrupting.remove(id);
+    }
+  }
+
+  Future<void> diagnose() async {
+    final watch = Stopwatch()..start();
+    final status = await api.snapshot();
+    final native = await host.status();
+    hideCaller = await host.privacy();
+    diagnostics =
+        'HTTPS API：${watch.elapsedMilliseconds} ms\n账号：${status.accountStatus}；设备：${status.deviceStatus}\nSIP：${registration.name}；音频：$audioRoute\n通知：${native['notifications'] ?? '此平台未提供'}；全屏来电：${native['full_screen'] ?? '此平台未提供'}\n麦克风：${await Permission.microphone.status}\n推送：$pushStatus\n${pushStages.entries.map((e) => '${e.key}: ${e.value.toLocal()}').join('\n')}';
+  }
+
+  Future<void> setHideCaller(bool value) async {
+    hideCaller = await host.privacy(value);
   }
 
   Future<void> configureTelecom() async {
@@ -299,6 +476,10 @@ class AppController extends ChangeNotifier implements CallAuthority {
   }
 
   Future<void> _permission() async {
+    if (await Permission.microphone.isGranted) return;
+    if (host.supported && (await host.status())['visible'] != true) {
+      throw StateError('请打开应用授予麦克风权限');
+    }
     if (!await Permission.microphone.request().isGranted) {
       throw StateError('需要麦克风权限');
     }
@@ -308,6 +489,7 @@ class AppController extends ChangeNotifier implements CallAuthority {
     await refresh();
     if (!canCall) throw StateError('没有呼叫权限或服务未就绪');
     await _permission();
+    await host.keepAlive();
     await sip.dial(extension);
   }
 
@@ -393,7 +575,9 @@ class AppController extends ChangeNotifier implements CallAuthority {
   Future<void> logout() async {
     Object? failure;
     try {
-      await api.updatePushToken(null);
+      try {
+        await api.updatePushToken(null);
+      } catch (_) {}
       await api.logout();
     } catch (e) {
       failure = e;
@@ -405,11 +589,19 @@ class AppController extends ChangeNotifier implements CallAuthority {
 
   Future<void> _clearSession() async {
     _epoch++;
+    recovery.reset();
+    _restoreRetry?.cancel();
     _poll?.cancel();
     _lease?.cancel();
     _sessionExpiry?.cancel();
+    _pushRetry?.cancel();
     events.stop();
-    await push.stop();
+    try {
+      await host.clear();
+    } catch (_) {}
+    try {
+      await push.stop();
+    } catch (_) {}
     try {
       await _stopSip();
     } catch (_) {
@@ -426,6 +618,36 @@ class AppController extends ChangeNotifier implements CallAuthority {
   }
 
   @override
+  Future<CallDto> lookup(String callId) => api.callById(callId);
+  @override
+  Future<void> report(String callId, String stage) async {
+    await api.deviceEvent(
+      callId,
+      stage,
+      const Uuid().v5(
+        '6ba7b811-9dad-11d1-80b4-00c04fd430c8',
+        '$deviceId:$callId:$stage',
+      ),
+    );
+    pushStages[stage] = DateTime.now();
+  }
+
+  @override
+  Future<void> finished(String callId) => host.completeWake(callId);
+  @override
+  Future<void> ensureRegistered(Duration timeout) async {
+    if (session == null) throw StateError('会话未恢复');
+    await refresh();
+    if (!_sipEnabled || snapshot?.deviceStatus != 'active') {
+      throw StateError('设备当前不可注册');
+    }
+    if (registration == SipRegistrationState.registered) return;
+    await sip.registrationStates
+        .firstWhere((s) => s == SipRegistrationState.registered)
+        .timeout(timeout);
+  }
+
+  @override
   Future<CallDto> resolve(String sipId) => api.callForSip(sipId);
   @override
   Future<CallDto> claim(String callId, String key) =>
@@ -436,14 +658,20 @@ class AppController extends ChangeNotifier implements CallAuthority {
   @override
   void dispose() {
     _closed = true;
+    _restoreRetry?.cancel();
     _poll?.cancel();
     _lease?.cancel();
     _sessionExpiry?.cancel();
+    _pushRetry?.cancel();
     events.stop();
     for (final sub in _subscriptions) {
       unawaited(sub.cancel());
     }
+    recovery.reset();
+    unawaited(host.dispose());
     unawaited(push.stop());
+    final call = calls.current;
+    if (call != null && !call.terminal) unawaited(platform.end(call.id));
     unawaited(sip.dispose());
     unawaited(store.close());
     api.close();

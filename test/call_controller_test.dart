@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:homeline/core/networking/api_failure.dart';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -208,5 +209,16 @@ void main() {
     await answer;
     expect(sip.answers, 0);
     expect(controller.current, isNull);
+  });
+  test('Reject can cancel while a claim request is in flight', () async {
+    await controller.onSipEvent(event(CallPhase.ringing));
+    authority.gate = Completer<CallDto>();
+    final pending = controller.answer('wire-id', 'answer-key');
+    await Future<void>.delayed(Duration.zero);
+    await controller.endByUser('wire-id', true, 'reject-key');
+    authority.gate!.complete(serverCall(winner: 'this-device'));
+    await pending;
+    expect(sip.answers, 0);
+    expect(controller.current!.terminal, true);
   });
 }

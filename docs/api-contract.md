@@ -53,6 +53,8 @@ Call：
 
 | 方法与路径 | 请求 | 成功响应 |
 |---|---|---|
+| GET /v1/calls/{id} | 无 | 当前用户和设备可见的 Call，200；不存在/不可见为 404 |
+| POST /v1/calls/{id}/device-events | `{stage}` + Idempotency-Key | `{}`，200；由服务器分配接收时间 |
 | POST /v1/calls/resolve | `{sip_call_id}` | 当前设备有权限的 Call，200 |
 | POST /v1/calls/{id}/claim | Idempotency-Key | Call，200，包含 answered_device_id |
 | POST /v1/calls/{id}/reject | Idempotency-Key | Call，200；只拒绝当前设备 leg，其他设备是否继续由服务器策略决定 |
@@ -82,7 +84,13 @@ QueueTask：
 
 `GET /v1/events` 升级为 WebSocket，使用 Authorization header，TLS。只发送当前会话可见的状态失效通知，例如 `{type:"snapshot_changed"}`；不得包含凭据。客户端重连后先全量 Snapshot。事件只用于加快同步，5 秒轮询是当前的兜底路径。服务端应对连接与消息频率限速，撤销设备后断开连接。
 
-FCM data 消息：`{type:"incoming_call",call_id:"business-id",expires_at:"RFC3339"}`，高优先级、短 TTL，不放 SIP 密码或会话令牌。服务端分别记录发送已受理、客户端收到、恢复、REGISTER 成功、振铃、接通，不能合并为一个 delivered 状态。当前客户端只处理前台提示/打开应用后的同步；后台 isolate 保存过期提示，不提供原生无界面唤醒链路。服务端推送状态回执接口、原生 headless SIP 恢复以及失败 fallback 均未完成。
+FCM data 消息：`{type:"incoming_call",call_id:"business-id",expires_at:"RFC3339"}`，高优先级、短 TTL，不放 SIP 密码或会话令牌。服务端分别记录发送已受理、客户端收到、恢复、REGISTER 成功、振铃、接通，不能合并为一个 delivered 状态。Android 原生接收器消费 data-only 提示；系统降级为普通优先级时只保存提示、不违规启动后台服务。服务端必须依据真实回执判断是否需要备用路由。
+
+`device-events.stage` 允许 received、restored、registered、ringing、connected、failed、media_lost。幂等 key 按设备/业务呼叫/阶段稳定生成，请求体仅包含 stage，服务器记录接收时间，允许迟到和乱序但不能倒退权威呼叫状态。FCM accepted 由发送服务记录，不由 App 声明。restored 表示安全会话及呼叫查询成功，registered 必须等到 SIP SDK 实际 REGISTER 成功；ringing 在真实 SIP INVITE 且 Telecom show 成功后上报；connected 仅由 SIP CONFIRMED 触发。服务器仍以 PBX 事件确认实际线路状态，不应把客户端回执当作授权或计费依据。
+
+PBX 唤醒策略：外部来电先由交换机保留（例如等待路由/队列），服务端推送后等指定设备 registered 回执，再向其当前有效 contact 投递 INVITE。注册期间不要让所有 fork leg 提前 480 导致外线结束。各设备必须使用不同 Call-ID leg，原子 claim 获胜后取消其他 leg。回执/注册/接听各有独立超时，超过有效期进入无人接听、语音信箱或运营者指定备用路由；FCM 成功受理不代表来电成功。
+
+media_lost 表示引擎进程重建时发现历史活跃 ID，后端应核查该设备 leg、结束已丢失的媒体、释放线路租约并更新记录。客户端不从本地 ID 恢复 active。服务器在推送令牌 UNREGISTERED/INVALID_ARGUMENT（确认不是 payload 错误）时撤销对应绑定；客户端下次启动/刷新令牌重新绑定。
 
 ## 错误与授权
 

@@ -4,10 +4,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+if (file("google-services.json").exists()) apply(plugin = "com.google.gms.google-services")
+
 android {
     namespace = "net.zerexa.homeline"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+
+    testOptions { unitTests.isIncludeAndroidResources = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -28,9 +32,20 @@ android {
         versionName = flutter.versionName
     }
 
+    val releaseStore = System.getenv("HOMELINE_KEYSTORE")
+    signingConfigs {
+        if (!releaseStore.isNullOrBlank()) {
+            create("operatorRelease") {
+                storeFile = file(releaseStore)
+                storePassword = requireNotNull(System.getenv("HOMELINE_STORE_PASSWORD"))
+                keyAlias = requireNotNull(System.getenv("HOMELINE_KEY_ALIAS"))
+                keyPassword = requireNotNull(System.getenv("HOMELINE_KEY_PASSWORD"))
+            }
+        }
+    }
     buildTypes {
         release {
-            // Release signing must be configured by the operator.
+            if (!releaseStore.isNullOrBlank()) signingConfig = signingConfigs.getByName("operatorRelease")
         }
     }
 }
@@ -43,4 +58,11 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation(platform("com.google.firebase:firebase-bom:35.0.0"))
+    implementation("com.google.firebase:firebase-messaging")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
 }

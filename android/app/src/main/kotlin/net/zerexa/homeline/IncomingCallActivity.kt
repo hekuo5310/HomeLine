@@ -20,6 +20,8 @@ class IncomingCallActivity : Activity() {
             else handler.postDelayed(this, 500)
         }
     }
+    override fun onResume() { super.onResume(); HostBridge.visible = true }
+    override fun onPause() { HostBridge.visible = false; super.onPause() }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
@@ -35,7 +37,7 @@ class IncomingCallActivity : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(32, 64, 32, 64)
             setBackgroundColor(android.graphics.Color.WHITE)
         }
-        layout.addView(TextView(this).apply { text = "HomeLine ${if (ringing) "来电" else "通话中"}\n${connection.callerDisplayName}"; textSize = 28f; gravity = Gravity.CENTER; setTextColor(android.graphics.Color.BLACK) })
+        layout.addView(TextView(this).apply { text = "HomeLine ${if (ringing) "来电" else "通话中"}\n${TelecomBridge.displayName(this@IncomingCallActivity, connection.callerDisplayName?.toString() ?: "HomeLine")}"; textSize = 28f; gravity = Gravity.CENTER; setTextColor(android.graphics.Color.BLACK) })
         for ((label, event) in (if (ringing) listOf("接听" to "answer", "拒接" to "reject") else listOf("挂断" to "disconnect"))) {
             layout.addView(Button(this).apply { text = label; setOnClickListener {
                 isEnabled = false

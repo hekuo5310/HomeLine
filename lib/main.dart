@@ -2,21 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/app.dart';
+import 'app/providers.dart';
+import 'core/networking/server_settings.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  const endpoint = String.fromEnvironment('API_BASE_URL');
-  final uri = Uri.tryParse(endpoint);
-  final configured =
-      uri != null &&
-      uri.scheme == 'https' &&
-      uri.host.isNotEmpty &&
-      uri.userInfo.isEmpty &&
-      !uri.hasQuery &&
-      !uri.hasFragment;
-  runApp(
-    configured
-        ? const ProviderScope(child: HomeLineApp())
-        : const SetupRequiredApp(),
-  );
+  String? endpoint;
+  try {
+    endpoint = await ServerSettings.load();
+  } catch (_) {}
+  launch(endpoint);
 }
+
+void launch(String? endpoint) => runApp(
+  endpoint != null
+      ? ProviderScope(
+          overrides: [apiEndpointProvider.overrideWithValue(endpoint)],
+          child: const HomeLineApp(),
+        )
+      : const SetupRequiredApp(),
+);

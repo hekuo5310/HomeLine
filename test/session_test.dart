@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:homeline/core/networking/api_failure.dart';
+import 'package:homeline/platform/call_integration/call_host.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homeline/application/app_controller.dart';
 import 'package:homeline/data/api/homeline_api.dart';
@@ -7,7 +10,19 @@ import 'package:homeline/data/local_database/local_store.dart';
 import 'package:homeline/domain/calls/sip_service.dart';
 import 'package:homeline/domain/queues/outbound_request.dart';
 import 'package:homeline/infrastructure/server_events.dart';
-import 'call_controller_test.dart' show TestSip, TestPlatform, event;
+
+import 'call_controller_test.dart'
+    show TestSip, TestPlatform, event, serverCall;
+
+class FakeHost extends CallHost {
+  @override
+  bool get supported => false;
+  bool failClear = false;
+  @override
+  Future<void> clear() async {
+    if (failClear) throw StateError('host unavailable');
+  }
+}
 
 class FakeVault extends SessionVault {
   SessionDto? saved;
@@ -64,7 +79,22 @@ class FakeEvents extends ServerEvents {
 
 class FakeApi extends HomeLineApi {
   FakeApi() : super('https://example.com');
-  bool revoked = false;
+  bool revoked = false, offline = false;
+  SessionDto? restored;
+  bool telemetryFails = false;
+  @override
+  Future<CallDto> callForSip(String sipId) async => serverCall();
+  @override
+  Future<void> deviceEvent(String id, String stage, String key) async {
+    if (telemetryFails) throw const ApiFailure('receipt unavailable');
+  }
+
+  @override
+  Future<SessionDto> session() async {
+    if (offline) throw const ApiFailure('offline');
+    return restored!;
+  }
+
   int loginCount = 0;
   Completer<SipCredentialsDto>? credentialGate;
   @override
@@ -106,6 +136,11 @@ class FakeApi extends HomeLineApi {
 }
 
 class CountingSip extends TestSip {
+  final emittedCalls = StreamController<SipCallEvent>.broadcast();
+  @override
+  Stream<SipCallEvent> get callEvents => emittedCalls.stream;
+  @override
+  Future<void> dispose() => emittedCalls.close();
   int registrations = 0, stops = 0;
   @override
   Future<void> register(SipConfiguration configuration) async {
@@ -125,12 +160,14 @@ void main() {
   late TestPlatform platform;
   late AppController controller;
   late FakeEvents events;
+  late FakeHost host;
   setUp(() {
     api = FakeApi();
     vault = FakeVault();
     sip = CountingSip();
     platform = TestPlatform();
     events = FakeEvents();
+    host = FakeHost();
     controller = AppController(
       api: api,
       sip: sip,
@@ -138,6 +175,7 @@ void main() {
       vault: vault,
       store: FakeStore(),
       serverEvents: events,
+      callHost: host,
     );
   });
   tearDown(() {
@@ -197,4 +235,48 @@ void main() {
       expect(events.lastToken, currentToken);
     },
   );
+  test(
+    'Offline restore retains secure session without fabricating registration',
+    () async {
+      vault.saved = await api.login('user', 'password', 'phone');
+      api.offline = true;
+      await controller.restore();
+      expect(vault.saved, isNotNull);
+      expect(controller.session, isNull);
+      expect(sip.registrations, 0);
+      api.offline = false;
+      api.restored = vault.saved;
+      await controller.restore();
+      expect(controller.session!.deviceId, 'server-device');
+      expect(sip.registrations, 1);
+    },
+  );
+  test(
+    'Native cleanup failure cannot retain session secrets after logout',
+    () async {
+      await controller.login('user', 'password', 'phone');
+      host.failClear = true;
+      await controller.logout();
+      expect(vault.saved, isNull);
+      expect(controller.session, isNull);
+      expect(api.token, isNull);
+      expect(sip.stops, greaterThan(0));
+    },
+  );
+  test('Telemetry outage cannot end a real SIP and Telecom call', () async {
+    await controller.login('user', 'password', 'phone');
+    api.telemetryFails = true;
+    sip.emittedCalls.add(event(CallPhase.ringing));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(platform.shown, 1);
+    expect(sip.hangups, 0);
+    sip.emittedCalls.add(event(CallPhase.active));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(platform.activated, 1);
+    expect(controller.calls.current!.phase, CallPhase.active);
+    expect(sip.hangups, 0);
+    sip.emittedCalls.add(event(CallPhase.ended));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(platform.ended, 1);
+  });
 }
