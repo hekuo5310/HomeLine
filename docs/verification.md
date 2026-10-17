@@ -9,7 +9,7 @@
 - `flutter pub get`：通过，精确版本与锁文件已生成。
 - `dart run build_runner build`：通过，生成 checked DTO。
 - `flutter test`：17 项单元/Widget 测试通过。
-- `flutter analyze`：最终检查进行中。
+- `flutter analyze`：通过，无问题。
 - `flutter build apk --debug`：本地 Gradle 首次构建进行中，尚不能记为通过。
 - 真机/模拟器集成测试：未运行。
 

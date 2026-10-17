@@ -16,7 +16,7 @@ dependencies:
   sqflite: 2.4.4+2
   firebase_core: 5.0.0
   firebase_messaging: 17.0.0
-  permission_handler: 13.0.2
+  permission_handler: 12.0.3
   uuid: 4.6.0
   sip_ua: 1.1.0
   flutter_webrtc: 1.6.2+hotfix.4

@@ -15,7 +15,7 @@
 | sqflite | 2.4.4+2 | BSD-2-Clause | Android/iOS/macOS；Windows 需未来实现 |
 | firebase_core | 5.0.0 | BSD-3-Clause | FlutterFire；需要自己的 Firebase 项目 |
 | firebase_messaging | 17.0.0 | BSD-3-Clause | Android/iOS/macOS/Web；不是 Windows 推送方案 |
-| permission_handler | 13.0.2 | MIT | 各平台权限不同；当前只接 Android 权限 |
+| permission_handler | 12.0.3 | MIT | Android 实现 13.0.1，compileSdk 35，可用于本工程 SDK 36 |
 | uuid | 4.6.0 | MIT | Dart；幂等请求编号，不作为设备身份认证 |
 | sip_ua | 1.1.0 | MIT | Android/iOS/桌面/Web；WSS/WebRTC，非原生 5061 SIP TLS |
 | flutter_webrtc | 1.6.2+hotfix.4 | MIT | 原生 WebRTC 媒体；实际平台音频行为需验收 |
@@ -25,3 +25,7 @@
 以上组件均有官方发布页/维护仓库，所选版本发布归档可审计。JSON 工具、Flutter lint 有意按 SDK 兼容性锁定；不因存在更高版本就忽略约束强行升级。`pubspec.lock` 固定传递依赖及 SHA256；发布前还需检查这些传递依赖的许可证，并通过 Flutter 内置许可页/发行材料保留 NOTICE。
 
 核查入口：`https://pub.dev/packages/<package>/versions/<version>`、`https://pub.dev/api/packages/<package>`，以及各发布归档 LICENSE。SIP API 根据发布归档源码适配，而非把 README 的内部接口假定为真实 SDK API。
+
+权限插件没有盲用最新版：13.0.2 解析到 Android 实现 14.1.0，要求 SDK 37；本工程选择已核实的 12.0.3 / Android 13.0.1 来保持 SDK 36 构建兼容。
+
+Firebase Messaging 17 新增的 onRegistered 发出 Firebase Installation ID，契约 v1 则需要 FCM registration token。适配器明确保留该版本仍支持的 getToken/onTokenRefresh 兼容 API，不把 FID 冒充 token；未来必须与服务器寻址协议一起迁移。
