@@ -12,3 +12,7 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Generated Kotlin sessions and Android build reports.
+/.kotlin/
+/build/

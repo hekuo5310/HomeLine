@@ -8,12 +8,13 @@
 
 - `flutter pub get`：通过，精确版本与锁文件已生成。
 - `dart run build_runner build`：通过，生成 checked DTO。
-- `flutter test`：17 项单元/Widget 测试通过。
+- `flutter test`：18 项单元/Widget 测试通过。
 - `flutter analyze`：通过，无问题。
-- `flutter build apk --debug`：本地 Gradle 首次构建进行中，尚不能记为通过。
+- `flutter build apk --debug`：通过，生成 Android debug APK，最终源码增量构建再次通过。Kotlin 原生 Telecom 类已编译入包。
+- APK 包检查：ZIP CRC 通过，13 个原生库 ELF 节表范围检查通过；包名 net.zerexa.homeline、minSdk 26、targetSdk 36。
 - 真机/模拟器集成测试：未运行。
 
-测试覆盖：重复来电去重、只有 SIP CONFIRMED 激活 Telecom、其他设备获胜、claim 途中取消、重复接听点击、终态后的乱序事件、TLS 配置拒绝、不允许 HTTP 重定向、幂等 key 重用、401/403/409、推送过期/不可信状态、号码注入，以及未配置启动 UI。
+测试覆盖：重复来电去重、只有 SIP CONFIRMED 激活 Telecom、其他设备获胜、claim 途中取消、重复接听点击、会话切换期间的旧响应隔离、终态后的乱序事件、TLS 配置拒绝、不允许 HTTP 重定向、幂等 key 重用、401/403/409、推送过期/不可信状态、号码注入，以及未配置启动 UI。
 
 ## 端到端验收（全部待测试）
 

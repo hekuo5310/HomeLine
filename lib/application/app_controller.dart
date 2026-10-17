@@ -157,16 +157,26 @@ class AppController extends ChangeNotifier implements CallAuthority {
       api.token = null;
       throw const ApiFailure('账号不可用或会话已过期', statusCode: 403);
     }
+    final epoch = ++_epoch;
     session = value;
+    snapshot = null;
     api.token = value.accessToken;
     await vault.save(value);
-    pendingOutbound = await store.pending(owner);
+    if (epoch != _epoch || session != value) {
+      throw StateError('会话已变化，请重新操作');
+    }
+    pendingOutbound = await store.pending('${value.userId}:${value.deviceId}');
+    if (epoch != _epoch || session != value) {
+      throw StateError('会话已变化，请重新操作');
+    }
     _sessionExpiry?.cancel();
     _sessionExpiry = Timer(value.expiresAt.difference(DateTime.now()), () {
       unawaited(_expire());
     });
     await refresh();
-    if (session == null) throw const ApiFailure('会话验证失败', statusCode: 403);
+    if (epoch != _epoch || session != value) {
+      throw StateError('会话已变化，请重新操作');
+    }
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 5), (_) {
       unawaited(refresh());

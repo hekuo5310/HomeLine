@@ -48,12 +48,16 @@ class FakeStore extends LocalStore {
 }
 
 class FakeEvents extends ServerEvents {
+  String? lastToken;
   @override
   Future<void> start(
     String baseUrl,
     String token,
     void Function() invalidate,
-  ) async {}
+  ) async {
+    lastToken = token;
+  }
+
   @override
   void stop() {}
 }
@@ -61,11 +65,12 @@ class FakeEvents extends ServerEvents {
 class FakeApi extends HomeLineApi {
   FakeApi() : super('https://example.com');
   bool revoked = false;
+  int loginCount = 0;
   Completer<SipCredentialsDto>? credentialGate;
   @override
   Future<SessionDto> login(String user, String password, String device) async =>
       SessionDto(
-        accessToken: 'test-device-token',
+        accessToken: 'test-device-token-${++loginCount}',
         expiresAt: DateTime.now().add(const Duration(hours: 1)),
         userId: 'server-user',
         extension: '1001',
@@ -119,18 +124,20 @@ void main() {
   late CountingSip sip;
   late TestPlatform platform;
   late AppController controller;
+  late FakeEvents events;
   setUp(() {
     api = FakeApi();
     vault = FakeVault();
     sip = CountingSip();
     platform = TestPlatform();
+    events = FakeEvents();
     controller = AppController(
       api: api,
       sip: sip,
       platform: platform,
       vault: vault,
       store: FakeStore(),
-      serverEvents: FakeEvents(),
+      serverEvents: events,
     );
   });
   tearDown(() {
@@ -171,6 +178,23 @@ void main() {
       await expectLater(login, throwsA(anything));
       expect(sip.registrations, 0);
       expect(controller.session, isNull);
+    },
+  );
+  test(
+    'Late login completion cannot replace a newer session event subscription',
+    () async {
+      final gate = Completer<SipCredentialsDto>();
+      api.credentialGate = gate;
+      final first = controller.login('user', 'password', 'phone');
+      await Future<void>.delayed(Duration.zero);
+      await controller.logout();
+      api.credentialGate = null;
+      await controller.login('user', 'password', 'new phone');
+      final currentToken = controller.session!.accessToken;
+      gate.complete(api.credentials);
+      await expectLater(first, throwsStateError);
+      expect(controller.session!.accessToken, currentToken);
+      expect(events.lastToken, currentToken);
     },
   );
 }
