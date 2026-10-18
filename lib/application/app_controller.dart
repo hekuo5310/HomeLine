@@ -119,6 +119,7 @@ class AppController extends ChangeNotifier
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   Timer? _poll, _lease, _sessionExpiry, _pushRetry, _restoreRetry;
   Future<void> _sipWork = Future<void>.value();
+  Future<void>? _clearing;
   SessionDto? session;
   SnapshotDto? snapshot;
   OutboundRequest? pendingOutbound;
@@ -170,6 +171,7 @@ class AppController extends ChangeNotifier
   }
 
   Future<void> restore() async {
+    await _clearing;
     final epoch = _epoch;
     try {
       final saved = await vault.read();
@@ -202,6 +204,7 @@ class AppController extends ChangeNotifier
   }
 
   Future<void> login(String username, String password, String name) async {
+    await _clearing;
     if (username.trim().isEmpty || password.isEmpty || name.trim().isEmpty) {
       throw const FormatException('请填写用户名、密码和设备名称');
     }
@@ -370,6 +373,7 @@ class AppController extends ChangeNotifier
   }
 
   Future<void> _stopSip() async {
+    final epoch = _epoch;
     _sipEnabled = false;
     final current = calls.current;
     try {
@@ -377,7 +381,7 @@ class AppController extends ChangeNotifier
         await calls.terminate(current.id);
       }
     } finally {
-      await sip.unregister();
+      if (epoch == _epoch) await sip.unregister();
     }
   }
 
@@ -592,7 +596,12 @@ class AppController extends ChangeNotifier
     if (failure != null) throw const ApiFailure('本机已退出；服务器会话撤销未确认，请在其他设备撤销本机');
   }
 
-  Future<void> _clearSession() async {
+  Future<void> _clearSession() =>
+      _clearing ??= _doClearSession().whenComplete(() {
+        _clearing = null;
+      });
+
+  Future<void> _doClearSession() async {
     _epoch++;
     recovery.reset();
     _restoreRetry?.cancel();

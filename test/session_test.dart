@@ -144,6 +144,7 @@ class CountingSip extends TestSip {
   @override
   Future<void> dispose() => emittedCalls.close();
   int registrations = 0, stops = 0;
+  Completer<void>? stopGate;
   @override
   Future<void> register(SipConfiguration configuration) async {
     registrations++;
@@ -152,6 +153,7 @@ class CountingSip extends TestSip {
   @override
   Future<void> unregister() async {
     stops++;
+    if (stopGate != null) await stopGate!.future;
   }
 }
 
@@ -296,6 +298,25 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
       expect(platform.shown, 0);
       expect(controller.calls.current!.terminal, isTrue);
+    },
+  );
+  test(
+    'New login waits for old native cleanup and retains its new secure session',
+    () async {
+      await controller.login('user', 'password', 'phone');
+      sip.stopGate = Completer<void>();
+      final exiting = controller.logout();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(controller.session, isNull);
+      final entering = controller.login('user', 'password', 'new phone');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(api.loginCount, 1);
+      sip.stopGate!.complete();
+      await exiting;
+      await entering;
+      expect(api.loginCount, 2);
+      expect(vault.saved!.accessToken, controller.session!.accessToken);
+      expect(controller.session!.accessToken, 'test-device-token-2');
     },
   );
 }

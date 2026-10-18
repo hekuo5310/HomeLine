@@ -8,18 +8,18 @@
 
 - `flutter pub get`：通过，精确版本与锁文件已生成。
 - `dart run build_runner build`：通过，生成 checked DTO。
-- `flutter test`：30 项单元/Widget 测试通过。
+- `flutter test`：31 项单元/Widget 测试通过。
 - `flutter analyze`：通过，无问题。
 - `flutter build apk --debug --no-pub`：通过，最新源码重新打包成功。增量压缩缓存曾出现 EOCD 错误，隔离旧生成目录后重新生成并通过产物校验。
 - `(cd android && ./gradlew :app:testDebugUnitTest)`：通过，5 项 Robolectric/JUnit 测试，0 失败/错误。覆盖提示有效期、进程存储重建、重复接收、敏感字段不落盘、数量上限及跨实例并发去重。发现并修复 AGP 9 host-test 资源任务对 copyFlutterAssetsDebug 缺失的依赖，保留资源校验。
 - `dart run tool/verify_tls.dart`：通过，临时生成本地不可信证书，以实际 HomeLineApi/Dio 发起 HTTPS 握手；证书被拒绝且服务器未收到 HTTP 请求。该测试依赖构建主机 OpenSSL，不保存测试私钥。
 - Android 合并 Manifest 检查：通过，原生 HomeMessagingService 存在，FlutterFire 的重复接收/后台服务已移除。
 - APK 包检查：ZIP CRC、13 个原生库 ELF 节表范围、apksigner debug 签名校验通过；包名 net.zerexa.homeline、minSdk 26、targetSdk 36。
-- 本地 debug APK SHA256：`2787817b4707a2e9a7045714bc5637efef6bd2edda3676df4d0ba2662bcc1627`。不同机器的 debug 密钥/构建环境可能产生不同哈希；此值不是正式发行版签名。
+- 本地 debug APK SHA256：`fe7e1eec9691857f1c9f59b76e5189d9888577e70adf36b57a969fa7459d8cd4`。不同机器的 debug 密钥/构建环境可能产生不同哈希；此值不是正式发行版签名。
 - 首次构建缺少插件所需 SDK 34/35，安装对应平台后构建通过；没有修改插件的编译目标。
 - 真机/模拟器集成测试：未运行。
 
-测试覆盖：重复来电去重、只有 SIP CONFIRMED 激活 Telecom、其他设备获胜、claim 途中取消、重复接听点击、会话切换期间的旧响应隔离、终态后的乱序事件、TLS 配置拒绝、不允许 HTTP 重定向、幂等 key 重用、401/403/409、推送过期/不可信状态、号码注入，以及未配置启动 UI、运行时 HTTPS 配置、并行推送恢复去重、实际注册超时、离线会话保留、原生清理失败后退出、回执故障不挂断、HTTP 核验等待期间立即处理 SIP 终态。
+测试覆盖：重复来电去重、只有 SIP CONFIRMED 激活 Telecom、其他设备获胜、claim 途中取消、重复接听点击、会话切换期间的旧响应隔离、终态后的乱序事件、TLS 配置拒绝、不允许 HTTP 重定向、幂等 key 重用、401/403/409、推送过期/不可信状态、号码注入，以及未配置启动 UI、运行时 HTTPS 配置、并行推送恢复去重、实际注册超时、离线会话保留、原生清理失败后退出、回执故障不挂断、HTTP 核验等待期间立即处理 SIP 终态，以及旧会话清理期间重新登录的令牌隔离。
 
 ## 端到端验收（全部待测试）
 
