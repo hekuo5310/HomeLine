@@ -41,7 +41,7 @@ class WakeStoreTest {
         assertTrue(store.add(hint("replacement"), now))
     }
     @Test fun simultaneousReceiversAcrossStoreInstancesPersistOnce() {
-        val context = RuntimeEnvironment.getApplication<Application>()
+        val context = RuntimeEnvironment.getApplication()
         val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
         try {
             val gate = java.util.concurrent.CountDownLatch(1)

@@ -13,9 +13,10 @@ Flutter + Dart 自建家庭电话客户端。**当前为可构建、待服务端
 ```sh
 flutter pub get --enforce-lockfile
 dart run build_runner build
-dart format --output=none --set-exit-if-changed lib test integration_test
+dart format --output=none --set-exit-if-changed lib test integration_test tool
 flutter analyze
 flutter test
+dart run tool/verify_tls.dart # 构建主机需安装 OpenSSL
 flutter build apk --debug
 (cd android && ./gradlew :app:testDebugUnitTest)
 ```
